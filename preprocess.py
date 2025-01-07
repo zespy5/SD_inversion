@@ -1,6 +1,6 @@
 from transformers import CLIPTextModel, CLIPTokenizer, logging, CLIPTextModelWithProjection
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler, EulerDiscreteScheduler
-
+from diffusers import StableDiffusionXLPipeline
 # suppress partial model loading warning
 logging.set_verbosity_error()
 
@@ -57,5 +57,33 @@ class PreprocessXL(nn.Module):
         
         self.scheduler = EulerDiscreteScheduler.from_pretrained(self.sd_version, subfolder="scheduler")\
             if scheduler == None else scheduler
+        
+        print(f'[INFO] loaded stable diffusion!')
+        
+    def get_text_embeds(self, prompt, device="cuda"):
+        tokenizers = [self.tokenizer, self.tokenizer_2]
+        text_encoders = [self.text_encoder, self.text_encoder_2]
+        
+        prompt = [prompt] if isinstance(prompt, str) else prompt
+        prompts = [prompt, prompt]
+        prompt_embeds_list = []
+        
+        for prompt, tokenizer, text_encoder in zip(prompts, tokenizers, text_encoders):
+            
+            text_inputs = tokenizer(
+                prompt,
+                padding="max_length",
+                max_length=tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            
+            text_input_ids = text_inputs.input_ids
+            
+            prompt_embeds = text_encoder
+            
+        
+        
+        
             
         
