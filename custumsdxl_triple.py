@@ -108,6 +108,7 @@ class dualcondition_SDXL(StableDiffusionXLPipeline):
         self,
         prompt: Union[str, List[str]] = None,
         prompt_2: Optional[Union[str, List[str]]] = None,
+        prompt_3: Optional[Union[str, List[str]]] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
         num_inference_steps: int = 50,
@@ -392,6 +393,23 @@ class dualcondition_SDXL(StableDiffusionXLPipeline):
             lora_scale=lora_scale,
             clip_skip=self.clip_skip,
         )
+        
+        (
+            prompt_embeds3,
+            _,
+            pooled_prompt_embeds3,
+            _,
+        ) = self.encode_prompt(
+            prompt=prompt_3,
+            prompt_2=None,
+            device=device,
+            num_images_per_prompt=num_images_per_prompt,
+            do_classifier_free_guidance=self.do_classifier_free_guidance,
+            negative_prompt=negative_prompt,
+            negative_prompt_2=negative_prompt_2,
+            lora_scale=lora_scale,
+            clip_skip=self.clip_skip,
+        )
 
         # 4. Prepare timesteps
         timesteps, num_inference_steps = retrieve_timesteps(
@@ -417,6 +435,7 @@ class dualcondition_SDXL(StableDiffusionXLPipeline):
         # 7. Prepare added time ids & embeddings
         add_text_embeds = pooled_prompt_embeds
         add_text_embeds2 = pooled_prompt_embeds2
+        add_text_embeds3 = pooled_prompt_embeds3
         if self.text_encoder_2 is None:
             text_encoder_projection_dim = int(pooled_prompt_embeds.shape[-1])
         else:
@@ -441,9 +460,9 @@ class dualcondition_SDXL(StableDiffusionXLPipeline):
             negative_add_time_ids = add_time_ids
 
         if self.do_classifier_free_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds, prompt_embeds2], dim=0)
-            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds, add_text_embeds2], dim=0)
-            add_time_ids = torch.cat([negative_add_time_ids, add_time_ids, add_time_ids], dim=0)
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds, prompt_embeds2, prompt_embeds3], dim=0)
+            add_text_embeds = torch.cat([negative_pooled_prompt_embeds, add_text_embeds, add_text_embeds2, add_text_embeds3], dim=0)
+            add_time_ids = torch.cat([negative_add_time_ids, add_time_ids, add_time_ids, add_time_ids], dim=0)
 
         prompt_embeds = prompt_embeds.to(device)
         add_text_embeds = add_text_embeds.to(device)
@@ -477,7 +496,7 @@ class dualcondition_SDXL(StableDiffusionXLPipeline):
                     continue
 
                 # expand the latents if we are doing classifier free guidance
-                latent_model_input = torch.cat([latents] * 3) if self.do_classifier_free_guidance else latents
+                latent_model_input = torch.cat([latents] * 4) if self.do_classifier_free_guidance else latents
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
 
@@ -497,8 +516,11 @@ class dualcondition_SDXL(StableDiffusionXLPipeline):
 
                 # perform guidance
                 if self.do_classifier_free_guidance:
-                    noise_pred_uncond, noise_pred_text, noise_pred_text2 = noise_pred.chunk(3)
-                    noise_pred = noise_pred_uncond + guidance_scale[0]*(noise_pred_text - noise_pred_uncond)+guidance_scale[1]*(noise_pred_text2 - noise_pred_uncond)
+                    noise_pred_uncond, noise_pred_text, noise_pred_text2, noise_pred_text3 = noise_pred.chunk(4)
+                    noise_pred = noise_pred_uncond + guidance_scale[0]*(noise_pred_text - noise_pred_uncond)\
+                            +guidance_scale[1]*(noise_pred_text2 - noise_pred_uncond)\
+                            +guidance_scale[2]*(noise_pred_text3 - noise_pred_uncond)\
+                            
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents_dtype = latents.dtype
@@ -581,23 +603,26 @@ class dualcondition_SDXL(StableDiffusionXLPipeline):
 if __name__=="__main__":
     from pathlib import Path
     pipe = dualcondition_SDXL.from_pretrained("stabilityai/stable-diffusion-xl-base-1.0", torch_dtype=torch.float16)
-    guid=Path(f'diff[5,5]_guid_results')
+    guid=Path(f'diff[5,5,5]_beach_guid_results')
     guid.mkdir(exist_ok=True)
     pipe = pipe.to("cuda")
-    prompts = ['a black dog', 'a white dog', 'a running dog', 'a sitting dog',
-               'spring', 'summer', 'autumn', 'winter', 'night', 'sunset',
-               'a black cat', 'a white cat', 'a running cat', 'a sitting cat']
-    for p in prompts:
-        prompt2 = p
-        prompt = "a photo of a city street"
-        
-        image = pipe(prompt=prompt,
-                    prompt_2=prompt2,
-                    negative_prompt='ugly, blurry, low res, unrealistic',
-                    num_images_per_prompt=10, 
-                    guidance_scale=[5.0,5.0]).images
-        whatobj=guid/p
-        whatobj.mkdir(exist_ok=True)
-        for i in range(10):
-            imagefile=whatobj/f'dual_{i}.png'
-            image[i].save(imagefile)
+    prompts = ['a black dog', 'a white dog', 'a running dog', 'a sitting dog',]
+
+    b_prompts =['spring', 'summer', 'autumn', 'winter']
+               #'a black cat', 'a white cat', 'a running cat', 'a sitting cat']
+    for i in range(4):
+        prompt = "a photo of a beach"
+        prompt2 = prompts[i]
+        for j in range(4):
+            prompt3 = b_prompts[j]
+            image = pipe(prompt=prompt,
+                        prompt_2=prompt2,
+                        prompt_3=prompt3,
+                        negative_prompt='ugly, blurry, low res, unrealistic',
+                        num_images_per_prompt=10, 
+                        guidance_scale=[5.0,5.0,5.0]).images
+            whatobj=guid/f'{prompts[i]}+{b_prompts[j]}'
+            whatobj.mkdir(exist_ok=True)
+            for k in range(10):
+                imagefile=whatobj/f'triple_{k}.png'
+                image[k].save(imagefile)
